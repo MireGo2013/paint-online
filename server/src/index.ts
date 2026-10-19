@@ -1,6 +1,6 @@
 import { mkdir } from 'node:fs/promises'
-import { createApp } from './app.js'
-import { FILES_DIR, PORT } from './config.js'
+import { createApp } from './app.ts'
+import { FILES_DIR, PORT } from './config.ts'
 
 await mkdir(FILES_DIR, { recursive: true })
 

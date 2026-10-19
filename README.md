@@ -2,7 +2,7 @@
 
 Совместный графический редактор: несколько человек открывают одну ссылку и рисуют на общем холсте в реальном времени.
 
-**Стек:** React 19, TypeScript 6, MobX 7, react-router 8, Canvas API, Vite 8, SCSS-модули — клиент; Node 24, Express 5, `express-ws` (WebSocket), ESM — сервер.
+**Стек:** React 19, TypeScript 6, MobX 7, react-router 8, Canvas API, Vite 8, SCSS-модули — клиент; Node 24, Express 5, `express-ws` (WebSocket), TypeScript 6 — сервер.
 
 ## Возможности
 

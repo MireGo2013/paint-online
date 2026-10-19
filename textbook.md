@@ -19,7 +19,7 @@
 
 **Что значит «проверено».** Пометка *проверено* означает, что утверждение подтверждено запуском кода или сверено с исходным кодом установленных библиотек (`node_modules`). Версии на момент проверки перечислены в главе 0 и в части II.
 
-**Код.** Код в главах совпадает с кодом проекта (`client/src`, `server/src`). Где глава показывает промежуточную версию, которая позже меняется, это сказано явно.
+**Код.** Код в главах совпадает с кодом проекта (`client/src`, `server/src`). Где глава показывает промежуточную версию, которая позже меняется, это сказано явно. Сервер в главах 9–14 показан на JavaScript, чтобы не отвлекаться от механизмов на типы. В проекте он написан на TypeScript с той же логикой, и итоговая версия с разбором типизации — в главе 17.
 
 ---
 
@@ -44,6 +44,7 @@
 14. [Хранение рисунка: снимок холста по HTTP](#глава-14-хранение-рисунка-снимок-холста-по-http)
 15. [Проверка и диагностика](#глава-15-проверка-и-диагностика)
 16. [Итоговая структура, ограничения и что дальше](#глава-16-итоговая-структура-ограничения-и-что-дальше)
+17. [Сервер на TypeScript](#глава-17-сервер-на-typescript)
 
 **Часть II. Что проверено и источники**
 
@@ -94,8 +95,9 @@ http: POST/GET /image?id=...           — снимок холста целик�
 | HTTP-сервер | Express | 5.3.0 |
 | WebSocket | express-ws (внутри ws) | 5.0.2 (ws 7.5.13) |
 | CORS | cors | 2.8.6 |
+| Язык сервера | TypeScript (запуск без сборки) | 6.0.3 |
 
-Сервер написан на JavaScript с модулями ESM, клиент — на TypeScript в строгом режиме.
+Клиент и сервер написаны на TypeScript в строгом режиме. Сервер использует модули ESM и запускается прямо из `.ts`-файлов: Node 24 сам удаляет типы (глава 17).
 
 ### 0.4. Карта проекта
 
@@ -116,14 +118,15 @@ client/src/
 └── assets/img/              иконки инструментов
 
 server/src/
-├── index.js                 точка входа: папка files, запуск
-├── app.js                   сборка приложения
-├── config.js                порт, путь к папке files
-├── routes/image.js          HTTP: снимок холста
+├── index.ts                 точка входа: папка files, запуск
+├── app.ts                   сборка приложения
+├── config.ts                порт, путь к папке files
+├── routes/image.ts          HTTP: снимок холста
 └── ws/
-    ├── index.js             WebSocket-маршрут и switch по method
-    ├── broadcast.js         рассылка участникам сессии
-    └── handlers/            connection.js, draw.js
+    ├── index.ts             WebSocket-маршрут и switch по method
+    ├── messages.ts          типы сообщений и проверка их формы
+    ├── broadcast.ts         рассылка участникам сессии
+    └── handlers/            connection.ts, draw.ts
 ```
 
 Запуск — два терминала:
@@ -2806,8 +2809,294 @@ mouseup на холсте A
 5. **Базовый класс фигуры.** `ShapeTool` с абстрактными `createFigure` и `drawFigure` вместо трёх почти одинаковых классов.
 6. **Группировка сообщений.** Копить отрезки и отправлять пачкой раз в кадр.
 7. **Проверка источника.** `cors({ origin })` для HTTP и проверка заголовка `Origin` при WebSocket-рукопожатии.
-8. **Сервер на TypeScript.** Общий файл с типами `Message` и `Figure` для клиента и сервера. Node 24 запускает `.ts` напрямую (`node --watch src/index.ts`), удаляя типы, и это работает с тем же ограничением, что `erasableSyntaxOnly` на клиенте: без `enum` и свойств-параметров.
-9. **Проверка сообщений на сервере.** Схема (например, zod) для `msg` и `figure`, чтобы сервер не пересылал мусор.
+8. **Общие типы протокола.** Сейчас клиент и сервер описывают `Message` каждый у себя (глава 17). Общий файл типов, подключённый в оба проекта через `import type`, исключил бы расхождения: импорт типа стирается при сборке и запуске, поэтому Vite и Node не будут даже пытаться загрузить этот файл.
+9. **Полная проверка сообщений на сервере.** Сервер уже проверяет форму сообщения (раздел 17.4), но содержимое `figure` пропускает как есть. Схема (например, zod) для каждого типа фигуры не дала бы пересылать мусор внутри неё.
+
+---
+
+## Глава 17. Сервер на TypeScript
+
+**Цель главы:** перевести сервер на TypeScript без шага сборки и понять, где типы библиотек расходятся с реальностью.
+
+### 17.1. Запуск без сборки
+
+Node 24 умеет запускать `.ts`-файлы напрямую: перед выполнением он **удаляет** аннотации типов (type stripping), заменяя их пробелами. Компилятор для запуска не нужен:
+
+```json
+{
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "node --watch src/index.ts",
+    "start": "node src/index.ts",
+    "typecheck": "tsc"
+  }
+}
+```
+
+У такого запуска есть ограничения, и они определяют настройки проекта:
+
+| Ограничение Node | Как учтено |
+|---|---|
+| только удаляет типы, ничего не генерирует: `enum`, `namespace`, свойства-параметры конструктора не работают | `erasableSyntaxOnly` превращает такой синтаксис в ошибку компиляции |
+| не проверяет типы | отдельный скрипт `npm run typecheck` (`tsc`) |
+| требует расширение `.ts` в импортах своих файлов | `allowImportingTsExtensions` + `noEmit` |
+| не читает `tsconfig.json`: ни `paths`, ни другие настройки | алиасы путей не используются |
+
+> **Важно** — запуск и проверка типов разделены. `npm run dev` запустит сервер даже с ошибками типов, потому что Node их не видит. Перед коммитом нужен `npm run typecheck`.
+
+### 17.2. Настройки и пакеты типов
+
+```bash
+npm install -D typescript@~6.0.3 @types/node@24 @types/express@5 @types/express-ws @types/ws @types/cors
+```
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["ES2024"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}
+```
+
+- **`module: "nodenext"`** — TypeScript разрешает импорты по правилам самого Node: с `"type": "module"` файлы считаются ESM, а пакеты на CommonJS импортируются через `import x from`, как и в рантайме.
+- **`lib: ["ES2024"]` без `DOM`** — на сервере нет `document` и `window`, и случайное обращение к ним станет ошибкой. Глобальные `Buffer`, `process`, `fetch` описаны в `@types/node`.
+- **`verbatimModuleSyntax`** — импорт, используемый только как тип, обязан быть помечен `type`. Для запуска через Node это важно вдвойне: Node удаляет `import type` целиком, а обычный импорт оставляет и пытается загрузить.
+
+> **Внимание** — типы библиотек описывают не тот рантайм, что работает в проекте, причём в двух местах:
+>
+> - **`@types/express-ws` объявляет `.ws` у `express.Router()`**, хотя на Express 5 этого метода нет (раздел 10.2, *проверено*). TypeScript разрешит `express.Router().ws(...)`, а сервер упадёт с `TypeError`. Типы здесь — обещание, а не гарантия.
+> - **`@types/ws` описывает `ws` 8**, а `express-ws` 5 работает на `ws` 7. В типах сообщение — `RawData` (`Buffer | ArrayBuffer | Buffer[]`), а в рантайме приходит строка. Разбор через `raw.toString()` корректен для обоих случаев.
+
+### 17.3. Сборка приложения
+
+```ts
+// src/app.ts
+import express from 'express'
+import expressWs from 'express-ws'
+import cors from 'cors'
+import { imageRouter } from './routes/image.ts'
+import { registerWs } from './ws/index.ts'
+
+export const createApp = () => {
+  const { app, getWss } = expressWs(express())
+  const wss = getWss()
+
+  app.use(cors())
+  app.use(express.json())
+
+  app.use(imageRouter)
+  registerWs(app, wss)
+
+  return app
+}
+```
+
+```ts
+// src/config.ts
+import path from 'node:path'
+
+export const PORT = Number(process.env.PORT) || 5000
+export const FILES_DIR = path.join(import.meta.dirname, '..', 'files')
+```
+
+- **`app` берётся из результата `expressWs(...)`.** У переданного приложения тип `express.Application`, и метода `.ws` в нём нет. А `expressWs(...).app` типизирован как `expressWs.Application`, то есть приложение с методом `.ws`. Объект один и тот же, отличается только тип.
+- **`Number(process.env.PORT) || 5000`.** В JavaScript `process.env.PORT || 5000` давал `string | number`, и `listen` молча принимал строку. Тип `process.env.PORT` — `string | undefined`, и TypeScript требует явного решения. `Number(undefined)` даёт `NaN`, и `|| 5000` подставит порт по умолчанию.
+
+### 17.4. Сообщения: тип и проверка формы
+
+```ts
+// src/ws/messages.ts
+import type { WebSocket } from 'ws'
+
+export type ConnectionMessage = {
+  method: 'connection'
+  id: string
+  username: string
+}
+
+// фигуру сервер не разбирает, а только пересылает
+export type DrawMessage = {
+  method: 'draw'
+  id: string
+  figure: unknown
+}
+
+export type Message = ConnectionMessage | DrawMessage
+
+// соединение с меткой сессии, которую ставит обработчик connection
+export type SessionSocket = WebSocket & { id?: string }
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null
+
+export const isMessage = (value: unknown): value is Message => {
+  if (!isObject(value) || typeof value.id !== 'string') return false
+
+  switch (value.method) {
+    case 'connection':
+      return typeof value.username === 'string'
+    case 'draw':
+      return isObject(value.figure)
+    default:
+      return false
+  }
+}
+```
+
+```ts
+// src/ws/index.ts
+import type expressWs from 'express-ws'
+import type { RawData, WebSocketServer } from 'ws'
+import { connectionHandler } from './handlers/connection.ts'
+import { drawHandler } from './handlers/draw.ts'
+import { isMessage, type Message } from './messages.ts'
+
+// типы описывают ws 8 (Buffer), express-ws работает на ws 7 и отдаёт строку — toString подходит обоим
+const parse = (raw: RawData | string): Message | null => {
+  try {
+    const value: unknown = JSON.parse(raw.toString())
+    return isMessage(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
+export const registerWs = (app: expressWs.Application, wss: WebSocketServer) => {
+  app.ws('/', (ws) => {
+    ws.on('message', (raw) => {
+      const msg = parse(raw)
+      if (!msg) return
+
+      switch (msg.method) {
+        case 'connection':
+          connectionHandler(ws, msg, wss)
+          break
+        case 'draw':
+          drawHandler(ws, msg, wss)
+          break
+      }
+    })
+  })
+}
+```
+
+Наивный вариант на TypeScript — утверждение типа: `const msg = JSON.parse(raw) as Message`. Проблема в том, что сервер — граница доверия. Сообщение может прислать кто угодно из консоли браузера, а `as` ничего не проверяет. `{ method: 'connection', id: 's1' }` без `username` прошло бы как `ConnectionMessage` и разошлось бы всем участникам.
+
+Рабочий вариант — **предикат типа** (type guard) `isMessage(value): value is Message`. Это обычная функция, которая проверяет значение в рантайме, а её возвращаемый тип говорит компилятору: если вернулось `true`, значение — `Message`. `JSON.parse` возвращает `any`, поэтому результат сразу кладётся в переменную типа `unknown`: дальше без проверки с ним ничего сделать нельзя.
+
+- **Проверяется форма, а не содержимое фигуры.** Сервер в фигуры не заглядывает (раздел 13.9), поэтому `figure: unknown` и проверка только того, что это объект. Новый тип фигуры по-прежнему не требует менять сервер.
+- **`switch (msg.method)` сужает тип.** В `case 'connection'` у `msg` тип `ConnectionMessage`, и `connectionHandler` получает именно его.
+- **Типы сообщений на сервере свои.** Клиент описывает `Figure` подробно, а серверу достаточно знать метод и сессию. Общий файл типов для обоих проектов — следующий шаг (раздел 16.4).
+
+> **На заметку** — в клиенте `parseMessage` осталась с `as Message` (раздел 12.3). Там данные приходят от собственного сервера, который уже проверил форму, а цена ошибки ниже: неверное сообщение испортит рисунок в одной вкладке, а не у всех участников.
+
+### 17.5. Метка сессии на соединении
+
+```ts
+// src/ws/broadcast.ts
+import type { WebSocketServer } from 'ws'
+import type { Message, SessionSocket } from './messages.ts'
+
+export const broadcast = (wss: WebSocketServer, msg: Message, except: SessionSocket | null = null) => {
+  wss.clients.forEach((client: SessionSocket) => {
+    if (client !== except && client.id === msg.id) {
+      client.send(JSON.stringify(msg))
+    }
+  })
+}
+```
+
+```ts
+// src/ws/handlers/connection.ts
+import type { WebSocketServer } from 'ws'
+import { broadcast } from '../broadcast.ts'
+import type { ConnectionMessage, SessionSocket } from '../messages.ts'
+
+export const connectionHandler = (ws: SessionSocket, msg: ConnectionMessage, wss: WebSocketServer) => {
+  ws.id = msg.id
+  broadcast(wss, msg)
+}
+```
+
+```ts
+// src/ws/handlers/draw.ts
+import type { WebSocketServer } from 'ws'
+import { broadcast } from '../broadcast.ts'
+import type { DrawMessage, SessionSocket } from '../messages.ts'
+
+export const drawHandler = (ws: SessionSocket, msg: DrawMessage, wss: WebSocketServer) => {
+  // сессия берётся из соединения, а не из сообщения: рисовать можно только там, куда подключился
+  if (!ws.id) return
+  broadcast(wss, { ...msg, id: ws.id }, ws)
+}
+```
+
+В JavaScript метка сессии записывалась прямо на объект соединения: `ws.id = msg.id`. В TypeScript у `WebSocket` нет поля `id`, и такое присваивание — ошибка. Тип `SessionSocket = WebSocket & { id?: string }` описывает соединение с необязательной меткой. Поле `id?` необязательное, потому что до сообщения `connection` метки нет. Отсюда проверка `if (!ws.id)` в `drawHandler`: теперь её требует и компилятор.
+
+> **На заметку** — другой способ хранить метку — `WeakMap<WebSocket, string>`: соединение служит ключом, и сторонний объект не меняется. Запись в `WeakMap` исчезает вместе с закрытым соединением, утечки нет. Но `wss.clients` всё равно перебирается целиком, так что по-настоящему структуру меняют только комнаты `Map<sessionId, Set<WebSocket>>` (раздел 12.5).
+
+### 17.6. HTTP-маршрут
+
+```ts
+// src/routes/image.ts (отличия от JavaScript-версии)
+const filePath = (id: string) => path.join(FILES_DIR, `${id}.png`)
+
+const isValidId = (id: unknown): id is string => typeof id === 'string' && ID_RE.test(id)
+
+const isNotFound = (e: unknown) => e instanceof Error && 'code' in e && e.code === 'ENOENT'
+
+imageRouter.post('/image', express.raw({ type: 'image/png', limit: '5mb' }), async (req, res) => {
+  const { id } = req.query
+  if (!isValidId(id)) return res.status(400).json({ message: 'Некорректный id' })
+
+  const body: unknown = req.body
+  if (!Buffer.isBuffer(body) || !body.subarray(0, 8).equals(PNG_SIGNATURE)) {
+    return res.status(400).json({ message: 'Ожидается PNG' })
+  }
+  // ...
+})
+```
+
+- **`isValidId` — предикат типа.** У `req.query.id` тип `string | ParsedQs | (string | ParsedQs)[] | undefined`: строка, вложенный объект (`?id[a]=1`), массив (`?id=a&id=b`) или ничего. После проверки TypeScript знает, что `id` — строка, и `filePath(id)` компилируется.
+- **`req.body` — в `unknown`.** Express типизирует тело как `any`, поэтому оно явно переводится в `unknown`. Дальше `Buffer.isBuffer(body)` сужает тип до `Buffer`.
+- **`isNotFound(e)`.** В `catch` у `e` тип `unknown`, ведь бросить можно что угодно. Проверка `e instanceof Error && 'code' in e` сужает тип так, что `e.code` можно читать без утверждения `as NodeJS.ErrnoException`.
+
+### 17.7. Проверка
+
+`tsc` проходит без ошибок. Те же сценарии, что для JavaScript-версии, дают тот же результат (*проверено*, сервер запущен как `node src/index.ts`):
+
+```
+WebSocket
+  'not json'                                  → отброшено
+  { method: 'connection', id: 's1' }          → отброшено (нет username)
+  { method: 'draw', figure: 'строка' }        → отброшено (figure не объект)
+  connection A, B в s1; C в s2                → A видит A и B, B видит B, C видит C
+  draw от A                                   → получил только B
+  draw от A с подменённым id                  → получил B, C не получил
+  draw от D без connection                    → не получил никто
+
+HTTP
+  GET новая сессия → 404     POST png → 204     GET после POST → 200, байты совпали
+  GET id=../src/index → 400  POST не PNG → 400  POST 6 МБ → 413
+  GET ?id=a&id=b → 400       OPTIONS → 204, Access-Control-Allow-Headers: content-type
+```
+
+Новое по сравнению с JavaScript-версией — первые три строки: сообщения неправильной формы раньше доходили до обработчиков, а теперь отбрасываются на входе.
 
 ---
 
@@ -2841,6 +3130,8 @@ mouseup на холсте A
 | Vite dev и `vite preview` отдают `index.html` на путь `/<id>` | HTTP-запросы к серверам Vite |
 | у `<dialog>` в `@types/react` есть атрибут `closedby` | `node_modules/@types/react/index.d.ts` |
 | вычисление `Sec-WebSocket-Accept` | пример из RFC 6455 в Node |
+| сервер на TypeScript запускается как `node src/index.ts` и ведёт себя так же, как JavaScript-версия; сообщения неправильной формы отбрасываются | `tsc`, тот же набор WebSocket- и HTTP-сценариев |
+| `@types/express-ws` объявляет `.ws` у `express.Router`, `@types/ws` 8 типизирует сообщение как `RawData` | `node_modules/@types/express-ws/index.d.ts`, `@types/ws` |
 
 **Что не проверялось запуском:** поведение в браузере, которое требует ручного взаимодействия. Это рисование мышью, отмена Esc у `<dialog>` в разных браузерах, скачивание файла, предупреждение `StrictMode` о закрытом сокете, «испорченный» холст. Эти утверждения опираются на спецификации и документацию из списка ниже.
 
@@ -2862,3 +3153,4 @@ mouseup на холсте A
 - Vite — https://vite.dev
 - TypeScript — https://www.typescriptlang.org/docs/
 - Node.js: модули ESM — https://nodejs.org/api/esm.html
+- Node.js: запуск TypeScript — https://nodejs.org/api/typescript.html

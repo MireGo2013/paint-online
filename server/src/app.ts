@@ -1,12 +1,12 @@
 import express from 'express'
 import expressWs from 'express-ws'
 import cors from 'cors'
-import { imageRouter } from './routes/image.js'
-import { registerWs } from './ws/index.js'
+import { imageRouter } from './routes/image.ts'
+import { registerWs } from './ws/index.ts'
 
 export const createApp = () => {
-  const app = express()
-  const wss = expressWs(app).getWss()
+  const { app, getWss } = expressWs(express())
+  const wss = getWss()
 
   app.use(cors())
   app.use(express.json())

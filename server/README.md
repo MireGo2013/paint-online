@@ -2,11 +2,12 @@
 
 Сервер совместного графического редактора: пересылает действия рисования участникам сессии по WebSocket и хранит снимок холста.
 
-**Стек:** Node 24, Express 5, `express-ws` 5, ESM, JavaScript.
+**Стек:** Node 24, Express 5, `express-ws` 5, ESM, TypeScript 6 (запуск без сборки: Node 24 сам удаляет типы).
 
 ```bash
 npm install
-npm run dev     # node --watch, порт 5000 (или PORT из окружения)
+npm run dev        # node --watch, порт 5000 (или PORT из окружения)
+npm run typecheck  # проверка типов: tsc
 ```
 
 - WebSocket: `ws://localhost:5000/`
@@ -19,15 +20,16 @@ npm run dev     # node --watch, порт 5000 (или PORT из окружени
 
 ```
 src/
-├── index.js               точка входа: создать папку files, создать приложение и запустить
-├── app.js                 сборка приложения: express-ws, middleware, маршруты
-├── config.js              порт и путь к папке files
+├── index.ts               точка входа: создать папку files, создать приложение и запустить
+├── app.ts                 сборка приложения: express-ws, middleware, маршруты
+├── config.ts              порт и путь к папке files
 ├── routes/
-│   └── image.js           HTTP: сохранение и выдача снимка холста
+│   └── image.ts           HTTP: сохранение и выдача снимка холста
 └── ws/
-    ├── index.js           WebSocket-маршрут: разбор JSON и switch по method
-    ├── broadcast.js       рассылка участникам сессии
+    ├── index.ts           WebSocket-маршрут: разбор JSON и switch по method
+    ├── messages.ts        типы сообщений и проверка их формы
+    ├── broadcast.ts       рассылка участникам сессии
     └── handlers/          по файлу на тип сообщения
-        ├── connection.js
-        └── draw.js
+        ├── connection.ts
+        └── draw.ts
 ```
